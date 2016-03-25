@@ -22,58 +22,26 @@ definition(
     category: "Convenience",
     iconUrl: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience.png",
     iconX2Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png",
-    iconX3Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png",
-    oauth: [displayName: "Karco ", displayLink: ""]
+    iconX3Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png"
 )
 
 preferences {
 
-//	page(name: "OptionsPage1", title: "Options",) {
-
-        section("Turn on/off this switche(s)") {
-            //paragraph ""
-            input( 
-            		name:			"switches", 
-                    title: 			"Select Lights/Switchs", 
-                    type: 			"capability.switch", 
-                    multiple: 		true
-			)
+        section( "Turn on/off this switche(s)" ) {
+            input( 	"SelectedSwitches", "capability.switch", title: "Select Lights/Switchs", multiple: true, required: true )
         }
         section("Execution"){
-            input(	name:			"ExecutionEnable", 
-            		title: 			"Enabled execution?", 
-                    type: 			"bool",   
-					required: 		true, 
-					defaultValue: 	true
-            )
-            input( 	name: 			"RunningMinutes",  
-            		title: 			"Running Minutes ?",  
-                    type: 			"number", 
-                    range: 			"1..*", 
-                    required: 		true, 
-                    defaultValue: 	60 
-            )
-            input( 	name: 			"WaitingMinutes",  
-                    title: 			"Waiting Minutes ?",  
-                    type: 			"number", 
-                    range: 			"1..*", 
-                    required: 		true, 
-                    defaultValue: 	60 
-            )
+            input(	"ExecutionEnable", "bool", title: "Enabled execution?", required: true, defaultValue: "true" )
+            input( 	"RunningMinutes", "number", title: "Running Minutes ?", range: "1..*", required: true, defaultValue: "60" )
+            input( 	"WaitingMinutes", "number", title: "Waiting Minutes ?",  range: "1..*", required: true, defaultValue: "60" )
         }
-//        section("Global") {
-//            icon(title: "choose an application icon",
-//                 required: true)
-//        }
-
-//	}
 
 }
 
 def installed() {
 
-    log.debug "==========================================================="
-    log.debug "Executing [installed]"
+	log.debug "==========================================================="
+    log.debug "Installing SmartApp"
     
 	Initialize()
   
@@ -81,8 +49,8 @@ def installed() {
 
 def updated() {
 
-    log.debug "==========================================================="
-    log.debug "Executing [updated]"
+	log.debug "==========================================================="
+    log.debug "Updating SmartApp";
 
     unschedule()
 	unsubscribe()
@@ -93,64 +61,121 @@ def updated() {
 
 def Initialize () {
 
-    log.debug "==========================================================="
-    log.debug("Initialize: ExecutionEnable is set to [ ${ExecutionEnable} ]")
+    log.debug "Initializing SmartApp"
 
-	subscribe(switches, "switch", Switch_Change)
-    
-    // Consider null value as true by default
-    if ( ExecutionEnable || ExecutionEnable == null ) {
-    
-        log.debug("Initialize: Sending ON command to ${switches.size()} switche(s)")
-    	switches.on()
-	
+    subscribe(SelectedSwitches, "switch", Switch_Change)
+
+    if ( nvl( ExecutionEnable, true ) ) {
+
+        state.SwitchesStatus = "off"
+        state.StatusChangeNext = GetEpochWithoutSecond()
+
+        Toggle_Switches()
+
+        //schedule("*/5 * * * * ?", FiveMinutes_Cron)
+        schedule("* * * * * ?", CronWakeUp)            
+
     } else {
-    
-    	log.debug("Initialize: Execution is not enabled")
-    
+
+        log.debug "Initialize: Execution is not enabled"
+
     }
 
 }
 
-def Switch_Change ( evt ) {
+def Switch_Change( pEvent ) {
 
-	log.debug "==========================================================="
-    log.debug "Switch_Change : $evt.name : $evt.value"
+	//log.debug "Executing Switch_Change with event at [${pEvent.value}]"
 
-	// Consider null value as true by default
-	if ( ExecutionEnable == true || ExecutionEnable == null ) {
-        if ( evt.value == "on" ) {
-
-            log.info("Switch_Change : Turning ON switche(s) for ${RunningMinutes} minute(s)")
-
-            state.SwitchesStatus = "Started"
-            runIn( 60 * RunningMinutes, Toggle_Switches )
-
-        } else if ( evt.value == "off" ) {
-
-            log.info("Switch_Change : Turning OFF switche(s) for ${WaitingMinutes} minute(s)")
-
-            state.SwitchesStatus = "Stopped"
-            runIn( 60 * WaitingMinutes, Toggle_Switches )
-
-        }
-    } else {
-        log.debug "Switch_Change : Execution is disable"
-    }        
-    
-    log.debug "Switch_Change : New State : ${state.SwitchesStatus}"
-    
 }
 
 def Toggle_Switches() {
 
-	log.debug "==========================================================="
-	log.debug "Executing [Toggle_Switches] with execution status at [${state.SwitchesStatus}]"
+    if ( nvl( ExecutionEnable, true ) ) {
+
+        if ( nvl( state.StatusChangeNext, 0 ) <= now() ) {    
+
+            state.StatusChangeEpoch = GetEpochWithoutSecond()
+
+            switch ( nvl( state.SwitchesStatus, "off" ) ) {
+            
+                case "on" : 
+                
+                    state.SwitchesStatus = "off"
+                    state.StatusChangeNext = state.StatusChangeEpoch + ( WaitingMinutes * 60 * 1000 )       
+
+                    log.info "Turning OFF ${SelectedSwitches.size()} switche(s) for ${WaitingMinutes} minute(s)"
+                    SelectedSwitches.off()
+                    
+                    break;
+                    
+                case "off" :  
+                
+                    state.SwitchesStatus = "on"
+                    state.StatusChangeNext = state.StatusChangeEpoch + ( RunningMinutes * 60 * 1000 )
+
+                    log.info "Turning ON ${SelectedSwitches.size()} switche(s) for ${WaitingMinutes} minute(s)"
+                    SelectedSwitches.on()
+                    
+                    break;       
+                    
+                default: 
+                	log.error "Unknown switche(s) status [${state.SwitchesStatus}]"
+                    
+					break;
+                    
+            }
+
+        } else {
+        
+            log.debug "Status will be change at ${GetDateFromEpoch(state.StatusChangeNext)}"
+            
+        }
+
+    } else {
     
-	if ( state.SwitchesStatus == "Started" ) {
-		switches.off()
-    } else if ( state.SwitchesStatus == "Stopped" ) {
-    	switches.on()
+        log.debug "Execution is disable"
+        
+    }    
+        
+}
+
+def CronWakeUp() {
+
+    log.debug "==========================================================="
+	log.debug "Executing [ CronWakeUp ] with switche(s) status at [ ${state.SwitchesStatus} ]"		
+    //log.debug "Next execution at [ ${state.StatusChangeNext.gettime()} ]"
+         
+    // returns a list of the values for all switches
+    def currSwitches = SelectedSwitches.currentSwitch
+    def onSwitches = currSwitches.findAll { 
+        switchVal -> switchVal == "on" ? true : false
     }
+    log.debug "${onSwitches.size()} out of ${SelectedSwitches.size()} switches are on"
+    
+    Toggle_Switches()
+    
+}
+
+def GetEpochWithoutSecond() {
+
+    Calendar wCalendarInstance = Calendar.getInstance( )
+      
+    wCalendarInstance.setTime( new Date() )
+    wCalendarInstance.set( Calendar.SECOND, 0 )
+    
+    return wCalendarInstance.getTimeInMillis()
+
+}
+
+def GetDateFromEpoch( long pTimeInMillis = 0 ) {
+    
+	return new Date( pTimeInMillis )
+    
+}
+
+public <T> T nvl(T arg0, T arg1) {
+
+    return ( arg0 == null ) ? arg1 : arg0;
 
 }
